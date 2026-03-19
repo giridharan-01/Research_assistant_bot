@@ -1,6 +1,6 @@
 streamlit
 pypdf
-bs4
+beautifulsoup4
 langchain==0.1.12
 langchain-community==0.0.28
 langchain-openai==0.1.7
