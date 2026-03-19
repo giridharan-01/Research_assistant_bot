@@ -8,6 +8,8 @@ import shutil
 import datetime
 import markdown
 import weasyprint
+os.environ["NO_PROXY"] = "*"
+os.environ["no_proxy"] = "*"
 
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
