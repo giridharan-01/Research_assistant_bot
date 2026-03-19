@@ -10,3 +10,4 @@ faiss-cpu
 openai==1.43.0
 python-dotenv
 markdown
+PyPDF2
