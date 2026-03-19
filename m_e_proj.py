@@ -8,6 +8,10 @@ import shutil
 import datetime
 import markdown
 import weasyprint
+os.environ.pop("HTTP_PROXY", None)
+os.environ.pop("HTTPS_PROXY", None)
+os.environ.pop("http_proxy", None)
+os.environ.pop("https_proxy", None)
 os.environ["NO_PROXY"] = "*"
 os.environ["no_proxy"] = "*"
 
@@ -33,9 +37,9 @@ from langchain.chains import (
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains.summarize import load_summarize_chain
 # ================================================
-
 client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY")
+    api_key=os.getenv("OPENAI_API_KEY"),
+    http_client=None   # ✅ THIS disables proxy injection
 )
 
 
