@@ -5,9 +5,10 @@
 import streamlit as st
 import os
 import shutil
-import datetime
 import markdown
 import weasyprint
+
+# 🔥 FIX PROXY ISSUE (VERY IMPORTANT)
 os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
 os.environ.pop("http_proxy", None)
@@ -18,47 +19,30 @@ os.environ["no_proxy"] = "*"
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 
-# ===== LangChain (Latest Compatible Imports) =====
+# ===== LangChain Imports =====
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from openai import OpenAI
-
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.chat_message_histories import ChatMessageHistory
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 
-from langchain.chains import (
-    create_history_aware_retriever,
-    create_retrieval_chain,
-)
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain.chains.summarize import load_summarize_chain
-# ================================================
-client = OpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    http_client=None   # ✅ THIS disables proxy injection
-)
 
-
+# Load env
 load_dotenv()
 
-st.set_page_config(
-    page_title="Chat with PDF",
-    page_icon="📚",
-    layout="wide"
-)
+st.set_page_config(page_title="Chat with PDF", layout="wide")
 
 st.title("Hi, I am Ray..")
 st.markdown("Your **PDF Assistant**")
 
-# Chat history store
 store = {}
 
 # =========================
-# FILE HANDLING UTILITIES
+# FILE HANDLING
 # =========================
 
 def save_uploaded_file(upload_file):
@@ -77,29 +61,31 @@ def delete_contents():
                 os.unlink(path)
             else:
                 shutil.rmtree(path)
-        except Exception as e:
-            print(f"Delete failed: {e}")
+        except:
+            pass
 
 def extract_metadata(file_path):
     reader = PdfReader(file_path)
     info = reader.metadata
-    title = info.title if info and info.title else "Unknown Title"
-    authors = info.author if info and info.author else "Unknown Authors"
-    return title, authors
+    return (
+        info.title if info and info.title else "Unknown Title",
+        info.author if info and info.author else "Unknown Authors"
+    )
 
 # =========================
-# FAISS + RAG INITIALIZATION
+# LLM + RAG SETUP
 # =========================
+
+def get_llm():
+    return ChatOpenAI(
+        model="gpt-4o-mini",
+        openai_api_key=os.getenv("OPENAI_API_KEY")
+    )
 
 def initialize_setup(doc_pages):
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        api_key=os.getenv("OPENAI_API_KEY")
-    )
+    llm = get_llm()
 
-    embeddings = OpenAIEmbeddings(
-        model="text-embedding-3-small"
-    )
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
     vectorstore = FAISS.from_documents(doc_pages, embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
@@ -108,9 +94,7 @@ def initialize_setup(doc_pages):
 
 def create_rag_chain(llm, retriever):
     contextualize_prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "Given the chat history and user question, rewrite it as a standalone question. "
-         "Do NOT answer."),
+        ("system", "Rewrite the question standalone. Do NOT answer."),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}")
     ])
@@ -120,9 +104,7 @@ def create_rag_chain(llm, retriever):
     )
 
     qa_prompt = ChatPromptTemplate.from_messages([
-        ("system",
-         "Use the following context to answer the question. "
-         "If you don't know, say you don't know.\n\n{context}"),
+        ("system", "Use context to answer. If unknown, say I don't know.\n\n{context}"),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}")
     ])
@@ -131,7 +113,7 @@ def create_rag_chain(llm, retriever):
 
     return create_retrieval_chain(history_aware_retriever, qa_chain)
 
-def get_session_history(session_id: str):
+def get_session_history(session_id):
     if session_id not in store:
         store[session_id] = ChatMessageHistory()
     return store[session_id]
@@ -156,49 +138,30 @@ def get_response(rag_obj, query):
 # PDF GENERATION
 # =========================
 
-def create_pdf(details_str, file_name):
-    html_content = markdown.markdown(details_str)
-    html = f"""
-    <html>
-    <body style="font-family:sans-serif">
-        {html_content}
-    </body>
-    </html>
-    """
-    weasyprint.HTML(string=html).write_pdf(file_name)
+def create_pdf(text, filename):
+    html = markdown.markdown(text)
+    weasyprint.HTML(string=html).write_pdf(filename)
 
 # =========================
-# PART 2: STREAMLIT UI
+# SESSION STATE
 # =========================
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
 if "llm" not in st.session_state:
-    # st.session_state.llm = ChatOpenAI(
-    #     model="gpt-4o-mini",
-    #     api_key=os.getenv("OPENAI_API_KEY")
-    # )
-    # st.session_state.llm = ChatOpenAI(
-    # model="gpt-4o-mini",
-    # openai_api_key=os.getenv("OPENAI_API_KEY")
-    # )
-    st.session_state.llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    client=client   # ✅ THIS IS THE FIX
-    )
-
-t1, t2 = st.tabs(["📄 PDF Assistant", "💡 Project Idea Generator"])
+    st.session_state.llm = get_llm()
 
 # =========================
-# TAB 1: PDF ASSISTANT
+# UI
+# =========================
+
+t1, t2 = st.tabs(["📄 PDF Assistant", "💡 Project Ideas"])
+
+# =========================
+# TAB 1: PDF CHAT
 # =========================
 
 with t1:
     uploaded_files = st.file_uploader(
-        "Upload PDF files",
-        type="pdf",
-        accept_multiple_files=True
+        "Upload PDFs", type="pdf", accept_multiple_files=True
     )
 
     if uploaded_files and "rag_obj" not in st.session_state:
@@ -206,20 +169,15 @@ with t1:
         metadata = []
 
         for file in uploaded_files:
-            st.success(f"Processing {file.name}")
             save_uploaded_file(file)
 
-            file_path = os.path.join("tempDir", file.name)
-            loader = PyPDFLoader(file_path)
+            path = os.path.join("tempDir", file.name)
+            loader = PyPDFLoader(path)
             pages = loader.load_and_split()
             doc_pages.extend(pages)
 
-            title, authors = extract_metadata(file_path)
-            metadata.append({
-                "title": title,
-                "authors": authors,
-                "pages": len(pages)
-            })
+            title, author = extract_metadata(path)
+            metadata.append({"title": title, "author": author})
 
         delete_contents()
 
@@ -230,13 +188,12 @@ with t1:
         st.session_state.metadata = metadata
 
     if "rag_obj" in st.session_state:
-        for meta in st.session_state.metadata:
-            st.write(f"**Title:** {meta['title']}")
-            st.write(f"**Authors:** {meta['authors']}")
-            st.write(f"**Pages:** {meta['pages']}")
+        for m in st.session_state.metadata:
+            st.write(f"**Title:** {m['title']}")
+            st.write(f"**Author:** {m['author']}")
             st.divider()
 
-        if query := st.chat_input("Ask a question about the PDFs"):
+        if query := st.chat_input("Ask your question"):
             with st.chat_message("user"):
                 st.markdown(query)
 
@@ -250,25 +207,19 @@ with t1:
 # =========================
 
 with t2:
-    st.title("Project Idea Generator")
+    st.subheader("Project Idea Generator")
 
-    degree_level = st.selectbox(
-        "Select Degree Level",
-        ["Bachelor's", "Master's", "PhD", "Professional Certification"]
+    degree = st.selectbox(
+        "Degree",
+        ["Bachelor's", "Master's", "PhD"]
     )
 
-    technology = st.text_area(
-        "Technology / Domain",
-        placeholder="Enter your area of interest"
-    )
+    tech = st.text_area("Technology / Domain")
 
-    if st.button("Generate Project Ideas"):
-        prompt = (
-            f"Generate 5 unique project titles for a "
-            f"{degree_level} student using {technology}. "
-            f"Return only titles."
-        )
+    if st.button("Generate"):
+        prompt = f"Generate 5 project ideas for {degree} in {tech}"
 
+        # ✅ FIX: Use invoke correctly
         response = st.session_state.llm.invoke(prompt)
-        st.markdown(response.content)
 
+        st.markdown(response.content)
