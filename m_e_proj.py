@@ -14,6 +14,8 @@ from PyPDF2 import PdfReader
 
 # ===== LangChain (Latest Compatible Imports) =====
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from openai import OpenAI
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.chat_message_histories import ChatMessageHistory
@@ -162,9 +164,13 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "llm" not in st.session_state:
+    # st.session_state.llm = ChatOpenAI(
+    #     model="gpt-4o-mini",
+    #     api_key=os.getenv("OPENAI_API_KEY")
+    # )
     st.session_state.llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        api_key=os.getenv("OPENAI_API_KEY")
+    model="gpt-4o-mini",
+    openai_api_key=os.getenv("OPENAI_API_KEY")
     )
 
 t1, t2 = st.tabs(["📄 PDF Assistant", "💡 Project Idea Generator"])
