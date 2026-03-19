@@ -34,6 +34,11 @@ from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain.chains.summarize import load_summarize_chain
 # ================================================
 
+client = OpenAI(
+    api_key=os.getenv("OPENAI_API_KEY")
+)
+
+
 load_dotenv()
 
 st.set_page_config(
@@ -170,9 +175,13 @@ if "llm" not in st.session_state:
     #     model="gpt-4o-mini",
     #     api_key=os.getenv("OPENAI_API_KEY")
     # )
+    # st.session_state.llm = ChatOpenAI(
+    # model="gpt-4o-mini",
+    # openai_api_key=os.getenv("OPENAI_API_KEY")
+    # )
     st.session_state.llm = ChatOpenAI(
     model="gpt-4o-mini",
-    openai_api_key=os.getenv("OPENAI_API_KEY")
+    client=client   # ✅ THIS IS THE FIX
     )
 
 t1, t2 = st.tabs(["📄 PDF Assistant", "💡 Project Idea Generator"])
