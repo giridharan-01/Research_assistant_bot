@@ -3,7 +3,7 @@ pypdf
 beautifulsoup4
 langchain==0.1.12
 langchain-community==0.0.28
-langchain-openai==0.1.7
+langchain-openai==0.1.14
 langchain-core==0.1.52
 langchain-text-splitters==0.0.1
 faiss-cpu
