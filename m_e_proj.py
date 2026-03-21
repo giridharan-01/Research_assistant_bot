@@ -297,6 +297,7 @@ with t2:
         """
 
         response = st.session_state.llm.invoke(prompt)
+        print("response",response)
 
         import json
         try:
