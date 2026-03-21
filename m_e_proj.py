@@ -236,19 +236,145 @@ with t1:
 # TAB 2: PROJECT IDEAS
 # =========================
 
+# =========================
+# TAB 2: QUESTION GENERATOR
+# =========================
+
+# =========================
+# TAB 2: PDF → QUESTION GENERATOR
+# =========================
+
 with t2:
-    st.subheader("Project Idea Generator")
+    st.title("📘 Question Generator from PDF (Bloom’s Taxonomy)")
 
-    degree = st.selectbox(
-        "Degree",
-        ["Bachelor's", "Master's", "PhD"]
-    )
+    uploaded_pdf = st.file_uploader("Upload Syllabus PDF", type="pdf")
 
-    tech = st.text_area("Technology / Domain")
+    if "question_bank" not in st.session_state:
+        st.session_state.question_bank = {}
 
-    if st.button("Generate"):
-        prompt = f"Generate 5 project ideas for {degree} in {tech}"
+    # =========================
+    # EXTRACT TEXT FROM PDF
+    # =========================
+
+    def extract_text_from_pdf(file):
+        reader = PdfReader(file)
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        return text
+
+    # =========================
+    # GENERATE QUESTIONS
+    # =========================
+
+    if uploaded_pdf and st.button("Generate Questions"):
+
+        syllabus_text = extract_text_from_pdf(uploaded_pdf)
+
+        prompt = f"""
+        You are an expert question paper setter.
+
+        From the syllabus below:
+        1. Identify units (Unit 1, Unit 2, etc.)
+        2. For EACH unit generate:
+            - 3 questions for 3 marks (Remember, Understand)
+            - 3 questions for 5 marks (Apply, Analyze)
+            - 3 questions for 10 marks (Evaluate, Create)
+
+        Use Bloom’s Taxonomy verbs.
+
+        Return STRICT JSON:
+        {{
+            "Unit 1": {{
+                "3M": ["..."],
+                "5M": ["..."],
+                "10M": ["..."]
+            }}
+        }}
+
+        Syllabus:
+        {syllabus_text}
+        """
 
         response = st.session_state.llm.invoke(prompt)
 
-        st.markdown(response.content)
+        import json
+        try:
+            st.session_state.question_bank = json.loads(response.content)
+        except:
+            st.error("⚠️ Failed to parse response. Try again.")
+
+    # =========================
+    # FILTER
+    # =========================
+
+    filter_type = st.selectbox(
+        "Filter Questions",
+        ["All", "3M", "5M", "10M"]
+    )
+
+    # =========================
+    # DISPLAY + EDIT
+    # =========================
+
+    for unit, data in st.session_state.question_bank.items():
+
+        with st.expander(f"📚 {unit}", expanded=True):
+
+            for mark_type, questions in data.items():
+
+                if filter_type != "All" and filter_type != mark_type:
+                    continue
+
+                st.subheader(f"{mark_type} Questions")
+
+                for i, q in enumerate(questions):
+
+                    col1, col2 = st.columns([8, 1])
+
+                    with col1:
+                        new_q = st.text_area(
+                            f"{unit}_{mark_type}_{i}",
+                            value=q,
+                            key=f"{unit}_{mark_type}_{i}"
+                        )
+                        st.session_state.question_bank[unit][mark_type][i] = new_q
+
+                    with col2:
+                        if st.button("❌", key=f"del_{unit}_{mark_type}_{i}"):
+                            st.session_state.question_bank[unit][mark_type].pop(i)
+                            st.rerun()
+
+                # ADD QUESTION
+                if st.button(f"➕ Add {mark_type}", key=f"add_{unit}_{mark_type}"):
+                    st.session_state.question_bank[unit][mark_type].append("New Question")
+                    st.rerun()
+
+    # =========================
+    # REORDER
+    # =========================
+
+    st.divider()
+    st.subheader("🔄 Reorder Questions")
+
+    units = list(st.session_state.question_bank.keys())
+
+    if units:
+        selected_unit = st.selectbox("Select Unit", units)
+        mark_type = st.selectbox("Select Type", ["3M", "5M", "10M"])
+
+        questions = st.session_state.question_bank[selected_unit][mark_type]
+
+        if len(questions) > 1:
+            idx = st.number_input("Question Index", 0, len(questions)-1)
+
+            direction = st.radio("Move", ["Up", "Down"])
+
+            if st.button("Apply Reorder"):
+                if direction == "Up" and idx > 0:
+                    questions[idx], questions[idx-1] = questions[idx-1], questions[idx]
+                elif direction == "Down" and idx < len(questions)-1:
+                    questions[idx], questions[idx+1] = questions[idx+1], questions[idx]
+
+                st.session_state.question_bank[selected_unit][mark_type] = questions
+                st.rerun()
