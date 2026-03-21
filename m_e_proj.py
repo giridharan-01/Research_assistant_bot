@@ -191,45 +191,46 @@ with t1:
 
     if "rag_obj" in st.session_state:
 
-        # 🔥 SHOW METADATA
+        # 🔥 METADATA
         for m in st.session_state.metadata:
             st.write(f"**Title:** {m['title']}")
             st.write(f"**Author:** {m['author']}")
             st.divider()
 
-        # 🔥 SHOW CHAT HISTORY
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+        # 🔥 CHAT DISPLAY CONTAINER
+        chat_container = st.container()
 
-        # 🔥 CHAT INPUT
-        if query := st.chat_input("Ask your question"):
+        with chat_container:
+            for msg in st.session_state.messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
 
+        # 🔥 INPUT ALWAYS AT BOTTOM
+        query = st.chat_input("Ask your question")
+
+        if query:
             # Save user message
             st.session_state.messages.append({
                 "role": "user",
                 "content": query
             })
 
-            with st.chat_message("user"):
-                st.markdown(query)
-
             # Get response
             response = get_response(st.session_state.rag_obj, query)
 
-            # Save assistant response
+            # Save assistant message
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": response
             })
 
-            with st.chat_message("assistant"):
-                st.markdown(response)
+            st.rerun()
 
-        # 🔥 CLEAR CHAT BUTTON
+        # 🔥 CLEAR CHAT
         if st.button("Clear Chat"):
             st.session_state.messages = []
             store.clear()
+            st.rerun()
 
 # =========================
 # TAB 2: PROJECT IDEAS
