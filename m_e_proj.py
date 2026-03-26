@@ -136,27 +136,41 @@ with t1:
 # =========================
 # TAB 2: QUESTION SYSTEM
 # =========================
+# =========================
+# TAB 2: QUESTION SYSTEM (FINAL FIXED)
+# =========================
 with t2:
 
     uploaded_pdf = st.file_uploader("Upload Syllabus PDF", type="pdf")
 
     def extract_text(file):
         reader = PdfReader(file)
-        return "\n".join([p.extract_text() for p in reader.pages])
+        return "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
 
     if uploaded_pdf and st.button("Generate Questions"):
 
         syllabus = extract_text(uploaded_pdf)
 
         prompt = f"""
-        Strictly Return ONLY valid JSON.
+        You are an expert question setter.
+
+        Generate REAL exam questions using Bloom's taxonomy.
+
+        RULES:
+        - No placeholders like q1, q2
+        - Questions must be meaningful
+        - Each unit must have:
+            - 15 questions (3M)
+            - 10 questions (5M)
+            - 8 questions (10M)
+        - Output ONLY JSON
 
         Format:
         {{
           "Unit 1": {{
-            "3M": ["q1","q2","q3","q4","q5","q6","q7","q8","q9","q10","q11"],
-            "5M": ["q1","q2","q3","q4","q5","q6"],
-            "10M": ["q1","q2","q3","q4","q5"]
+            "3M": ["question1", "question2"],
+            "5M": ["question1"],
+            "10M": ["question1"]
           }}
         }}
 
@@ -172,7 +186,7 @@ with t2:
             try:
                 parsed = json.loads(match.group())
 
-                # Validate structure
+                # structure validation
                 for unit, val in parsed.items():
                     if not isinstance(val, dict):
                         continue
@@ -183,10 +197,39 @@ with t2:
                 st.session_state.question_bank = parsed
 
             except:
-                st.error("Invalid JSON format")
+                st.error("⚠️ Invalid JSON format")
 
-    # Selection limits
+    # =========================
+    # UNIT SLIDER
+    # =========================
+
+    st.subheader("🎯 Select Units")
+
+    unit_numbers = list(range(1, 6))  # Unit 1–5
+
+    selected_units = st.slider(
+        "Select Unit Range",
+        min_value=1,
+        max_value=5,
+        value=(1, 5)
+    )
+
+    selected_unit_names = [
+        f"Unit {i}" for i in range(selected_units[0], selected_units[1] + 1)
+    ]
+
+    # =========================
+    # LIMITS
+    # =========================
+
     limits = {"3M": 10, "5M": 5, "10M": 4}
+
+    if "selected_questions" not in st.session_state:
+        st.session_state.selected_questions = {"3M": [], "5M": [], "10M": []}
+
+    # =========================
+    # DISPLAY
+    # =========================
 
     for mark_type in ["3M", "5M", "10M"]:
 
@@ -194,17 +237,23 @@ with t2:
 
         selected = st.session_state.selected_questions[mark_type]
 
-        for unit, data in st.session_state.question_bank.items():
+        for unit in selected_unit_names:
+
+            if unit not in st.session_state.question_bank:
+                continue
+
+            data = st.session_state.question_bank[unit]
 
             if not isinstance(data, dict):
                 continue
 
-            st.markdown(f"### {unit}")
-
             questions = data.get(mark_type, [])
 
-            if not isinstance(questions, list):
+            if not questions:
+                st.warning(f"No {mark_type} questions in {unit}")
                 continue
+
+            st.markdown(f"### 📘 {unit}")
 
             for i, q in enumerate(questions):
 
@@ -215,10 +264,14 @@ with t2:
                     if len(selected) < limits[mark_type]:
                         selected.append(q)
                     else:
-                        st.warning(f"Max {limits[mark_type]} reached")
+                        st.warning(f"⚠️ Max {limits[mark_type]} reached")
 
                 elif not checked and q in selected:
                     selected.remove(q)
+
+    # =========================
+    # EXPORT
+    # =========================
 
     st.divider()
 
