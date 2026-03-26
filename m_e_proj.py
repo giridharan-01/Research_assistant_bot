@@ -136,9 +136,6 @@ with t1:
 # =========================
 # TAB 2: QUESTION SYSTEM
 # =========================
-# =========================
-# TAB 2: QUESTION SYSTEM (FINAL FIXED)
-# =========================
 with t2:
 
     uploaded_pdf = st.file_uploader("Upload Syllabus PDF", type="pdf")
@@ -147,30 +144,43 @@ with t2:
         reader = PdfReader(file)
         return "\n".join([p.extract_text() for p in reader.pages if p.extract_text()])
 
+    # =========================
+    # GENERATE QUESTIONS
+    # =========================
     if uploaded_pdf and st.button("Generate Questions"):
 
         syllabus = extract_text(uploaded_pdf)
 
         prompt = f"""
-        You are an expert question setter.
+        You are an expert university question paper setter.
 
-        Generate REAL exam questions using Bloom's taxonomy.
+        Generate a LARGE number of HIGH-QUALITY exam questions.
 
-        RULES:
-        - No placeholders like q1, q2
-        - Questions must be meaningful
-        - Each unit must have:
-            - 15 questions (3M)
-            - 10 questions (5M)
-            - 8 questions (10M)
-        - Output ONLY JSON
+        STRICT RULES:
+        - DO NOT use placeholders like q1, q2
+        - Questions must be complete and meaningful
+        - Use Bloom’s taxonomy verbs
+        - No repetition
+        - Cover all topics
 
-        Format:
+        REQUIREMENTS:
+        - 3M: At least 20 questions
+        - 5M: At least 12 questions
+        - 10M: At least 8 questions
+
+        RETURN ONLY VALID JSON
+
+        FORMAT:
         {{
           "Unit 1": {{
-            "3M": ["question1", "question2"],
-            "5M": ["question1"],
-            "10M": ["question1"]
+            "3M": ["Define...", "..."],
+            "5M": ["Explain...", "..."],
+            "10M": ["Analyze...", "..."]
+          }},
+          "Unit 2": {{
+            "3M": [...],
+            "5M": [...],
+            "10M": [...]
           }}
         }}
 
@@ -186,7 +196,7 @@ with t2:
             try:
                 parsed = json.loads(match.group())
 
-                # structure validation
+                # Validate structure
                 for unit, val in parsed.items():
                     if not isinstance(val, dict):
                         continue
@@ -197,40 +207,33 @@ with t2:
                 st.session_state.question_bank = parsed
 
             except:
-                st.error("⚠️ Invalid JSON format")
+                st.error("⚠️ JSON parsing failed")
 
     # =========================
-    # UNIT SLIDER
+    # UNIT SELECTBOX
     # =========================
+    st.subheader("🎯 Select Unit")
 
-    st.subheader("🎯 Select Units")
+    all_units = list(st.session_state.question_bank.keys())
 
-    unit_numbers = list(range(1, 6))  # Unit 1–5
-
-    selected_units = st.slider(
-        "Select Unit Range",
-        min_value=1,
-        max_value=5,
-        value=(1, 5)
+    unit_option = st.selectbox(
+        "Choose Unit",
+        ["All Units"] + all_units if all_units else ["All Units"]
     )
 
-    selected_unit_names = [
-        f"Unit {i}" for i in range(selected_units[0], selected_units[1] + 1)
-    ]
+    if unit_option == "All Units":
+        selected_unit_names = all_units
+    else:
+        selected_unit_names = [unit_option]
 
     # =========================
     # LIMITS
     # =========================
-
     limits = {"3M": 10, "5M": 5, "10M": 4}
 
-    if "selected_questions" not in st.session_state:
-        st.session_state.selected_questions = {"3M": [], "5M": [], "10M": []}
-
     # =========================
-    # DISPLAY
+    # DISPLAY QUESTIONS
     # =========================
-
     for mark_type in ["3M", "5M", "10M"]:
 
         st.subheader(f"{mark_type} Questions")
@@ -272,7 +275,6 @@ with t2:
     # =========================
     # EXPORT
     # =========================
-
     st.divider()
 
     if st.button("📄 Export Selected Questions"):
