@@ -10,15 +10,11 @@ import weasyprint
 import json
 import re
 
-# Fix proxy issues
-os.environ.pop("HTTP_PROXY", None)
-os.environ.pop("HTTPS_PROXY", None)
 os.environ["NO_PROXY"] = "*"
 
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 
-# LangChain
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
@@ -38,18 +34,8 @@ st.set_page_config(page_title="Chat with PDF", layout="wide")
 st.title("Hi, I am Ray..")
 st.markdown("Your **PDF Assistant**")
 
-# UI Styling
-st.markdown("""
-<style>
-    .stChatMessage {
-        border-radius: 10px;
-        padding: 10px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # =========================
-# SESSION STATE
+# SESSION
 # =========================
 
 store = {}
@@ -57,14 +43,14 @@ store = {}
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+if "selected_questions" not in st.session_state:
+    st.session_state.selected_questions = {"3M": [], "5M": [], "10M": []}
+
 if "llm" not in st.session_state:
-    st.session_state.llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        openai_api_key=os.getenv("OPENAI_API_KEY")
-    )
+    st.session_state.llm = ChatOpenAI(model="gpt-4o-mini")
 
 # =========================
-# FILE HANDLING
+# FILE
 # =========================
 
 def save_uploaded_file(upload_file):
@@ -72,89 +58,17 @@ def save_uploaded_file(upload_file):
     with open(os.path.join("tempDir", upload_file.name), "wb") as f:
         f.write(upload_file.getbuffer())
 
-def delete_contents():
-    folder = os.path.join(os.getcwd(), "tempDir")
-    if not os.path.exists(folder):
-        return
-    for file in os.listdir(folder):
-        path = os.path.join(folder, file)
-        try:
-            if os.path.isfile(path):
-                os.unlink(path)
-            else:
-                shutil.rmtree(path)
-        except:
-            pass
-
-def extract_metadata(file_path):
-    reader = PdfReader(file_path)
-    info = reader.metadata
-    return (
-        info.title if info and info.title else "Unknown Title",
-        info.author if info and info.author else "Unknown Authors"
-    )
-
 # =========================
-# RAG SETUP
+# RAG
 # =========================
-
-def get_llm():
-    return ChatOpenAI(
-        model="gpt-4o-mini",
-        openai_api_key=os.getenv("OPENAI_API_KEY")
-    )
 
 def initialize_setup(doc_pages):
-    llm = get_llm()
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
     vectorstore = FAISS.from_documents(doc_pages, embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-    return llm, retriever
-
-def create_rag_chain(llm, retriever):
-    contextualize_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Rewrite the question standalone. Do NOT answer."),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}")
-    ])
-
-    history_aware_retriever = create_history_aware_retriever(
-        llm, retriever, contextualize_prompt
-    )
-
-    qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Answer using context and mention source page numbers. If unknown, say I don't know.\n\n{context}"),
-        MessagesPlaceholder("chat_history"),
-        ("human", "{input}")
-    ])
-
-    qa_chain = create_stuff_documents_chain(llm, qa_prompt)
-
-    return create_retrieval_chain(history_aware_retriever, qa_chain)
-
-def get_session_history(session_id):
-    if session_id not in store:
-        store[session_id] = ChatMessageHistory()
-    return store[session_id]
-
-def create_rag_pipeline(rag_chain):
-    return RunnableWithMessageHistory(
-        rag_chain,
-        get_session_history,
-        input_messages_key="input",
-        history_messages_key="chat_history",
-        output_messages_key="answer",
-    )
-
-def get_response(rag_obj, query):
-    result = rag_obj.invoke(
-        {"input": query},
-        config={"configurable": {"session_id": "user123"}}
-    )
-    return result["answer"]
+    return vectorstore.as_retriever(search_kwargs={"k": 4})
 
 # =========================
-# PDF GENERATION
+# PDF
 # =========================
 
 def create_pdf(text, filename):
@@ -162,179 +76,140 @@ def create_pdf(text, filename):
     weasyprint.HTML(string=html).write_pdf(filename)
 
 # =========================
-# UI
+# TABS
 # =========================
 
-t1, t2 = st.tabs(["📄 PDF Assistant", "💡 Question Generator"])
+t1, t2 = st.tabs(["📄 PDF Assistant", "📘 Question Generator"])
 
 # =========================
-# TAB 1
+# TAB 1 (FIXED CHAT INPUT)
 # =========================
 
 with t1:
+
+    st.markdown("""
+    <style>
+    .chat-container {
+        height: 70vh;
+        overflow-y: auto;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+    }
+    .input-box {
+        position: fixed;
+        bottom: 0;
+        width: 70%;
+        background: white;
+        padding: 10px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
 
-    if st.button("🔄 Upload New PDF"):
-        st.session_state.pop("rag_obj", None)
-        st.session_state.pop("metadata", None)
-        st.session_state.messages = []
-        store.clear()
-        st.rerun()
-
-    if uploaded_files and "rag_obj" not in st.session_state:
-        doc_pages = []
-        metadata = []
-
+    if uploaded_files and "retriever" not in st.session_state:
+        docs = []
         for file in uploaded_files:
             save_uploaded_file(file)
-            path = os.path.join("tempDir", file.name)
-
-            loader = PyPDFLoader(path)
+            loader = PyPDFLoader(os.path.join("tempDir", file.name))
             pages = loader.load()
-
             splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-            pages = splitter.split_documents(pages)
+            docs.extend(splitter.split_documents(pages))
 
-            doc_pages.extend(pages)
+        st.session_state.retriever = initialize_setup(docs)
 
-            title, author = extract_metadata(path)
-            metadata.append({"title": title, "author": author})
+    if "retriever" in st.session_state:
 
-        delete_contents()
-
-        llm, retriever = initialize_setup(doc_pages)
-        rag_chain = create_rag_chain(llm, retriever)
-
-        st.session_state.rag_obj = create_rag_pipeline(rag_chain)
-        st.session_state.metadata = metadata
-
-    if "rag_obj" in st.session_state:
-
-        for m in st.session_state.metadata:
-            st.write(f"**Title:** {m['title']}")
-            st.write(f"**Author:** {m['author']}")
-            st.divider()
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
         for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+            st.chat_message(msg["role"]).markdown(msg["content"])
+
+        st.markdown('</div>', unsafe_allow_html=True)
 
         query = st.chat_input("Ask your question")
 
         if query:
             st.session_state.messages.append({"role": "user", "content": query})
 
-            response = get_response(st.session_state.rag_obj, query)
+            docs = st.session_state.retriever.get_relevant_documents(query)
+            context = "\n".join([d.page_content for d in docs])
 
-            st.session_state.messages.append({"role": "assistant", "content": response})
+            response = st.session_state.llm.invoke(f"Answer:\n{context}\nQ:{query}")
 
+            st.session_state.messages.append({"role": "assistant", "content": response.content})
             st.rerun()
-
-        if st.button("Clear Chat"):
-            st.session_state.messages = []
-            store.clear()
-            st.rerun()
-
-        if st.button("📥 Download Chat as PDF"):
-            chat_text = ""
-            for msg in st.session_state.messages:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                chat_text += f"**{role}:** {msg['content']}\n\n"
-
-            create_pdf(chat_text, "chat.pdf")
-
-            with open("chat.pdf", "rb") as f:
-                st.download_button("Download PDF", f, file_name="chat.pdf")
 
 # =========================
-# TAB 2
+# TAB 2 (CHECKBOX SYSTEM)
 # =========================
 
 with t2:
-    st.title("📘 Question Generator from PDF")
 
     uploaded_pdf = st.file_uploader("Upload Syllabus PDF", type="pdf")
 
     if "question_bank" not in st.session_state:
         st.session_state.question_bank = {}
 
-    def extract_text_from_pdf(file):
+    def extract_text(file):
         reader = PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text
+        return "\n".join([p.extract_text() for p in reader.pages])
 
     if uploaded_pdf and st.button("Generate Questions"):
-        syllabus_text = extract_text_from_pdf(uploaded_pdf)
+
+        syllabus = extract_text(uploaded_pdf)
 
         prompt = f"""
-        You are a strict JSON generator.
-
-        Output ONLY valid JSON.
-
-        Format:
-        {{
-            "Unit 1": {{
-                "3M": ["Q1", "Q2", "Q3"],
-                "5M": ["Q1", "Q2", "Q3"],
-                "10M": ["Q1", "Q2", "Q3"]
-            }}
-        }}
-
-        Syllabus:
-        {syllabus_text}
+        Generate MANY questions per unit.
+        Return JSON format.
+        Each unit must have at least:
+        - 15 questions (3M)
+        - 10 questions (5M)
+        - 8 questions (10M)
+        Syllabus:\n{syllabus}
         """
 
-        response = st.session_state.llm.invoke(prompt)
-
-        raw = response.content
-        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        res = st.session_state.llm.invoke(prompt)
+        match = re.search(r"\{.*\}", res.content, re.DOTALL)
 
         if match:
-            try:
-                st.session_state.question_bank = json.loads(match.group())
-            except:
-                st.error("Parsing failed")
-        else:
-            st.error("Invalid response")
+            st.session_state.question_bank = json.loads(match.group())
 
-    filter_type = st.selectbox("Filter", ["All", "3M", "5M", "10M"])
+    # LIMITS
+    limits = {"3M": 10, "5M": 5, "10M": 4}
 
-    for unit, data in st.session_state.question_bank.items():
-        with st.expander(unit, expanded=True):
-            for mark_type, questions in data.items():
-                if filter_type != "All" and filter_type != mark_type:
-                    continue
+    for mark_type in ["3M", "5M", "10M"]:
 
-                st.subheader(mark_type)
+        st.subheader(f"{mark_type} Questions")
+        selected = st.session_state.selected_questions[mark_type]
 
-                for i, q in enumerate(questions):
-                    col1, col2 = st.columns([8, 1])
-
-                    with col1:
-                        new_q = st.text_area(f"{unit}_{mark_type}_{i}", value=q)
-                        st.session_state.question_bank[unit][mark_type][i] = new_q
-
-                    with col2:
-                        if st.button("❌", key=f"del_{unit}_{mark_type}_{i}"):
-                            questions.pop(i)
-                            st.rerun()
-
-                if st.button(f"➕ Add {mark_type}", key=f"add_{unit}_{mark_type}"):
-                    questions.append("New Question")
-                    st.rerun()
-
-    if st.button("📄 Export Questions PDF"):
-        text = ""
         for unit, data in st.session_state.question_bank.items():
-            text += f"# {unit}\n"
-            for mtype, qs in data.items():
-                text += f"## {mtype}\n"
-                for q in qs:
-                    text += f"- {q}\n"
+            st.markdown(f"### {unit}")
 
-        create_pdf(text, "questions.pdf")
+            for i, q in enumerate(data.get(mark_type, [])):
+                key = f"{unit}_{mark_type}_{i}"
+                checked = st.checkbox(q, key=key)
 
-        with open("questions.pdf", "rb") as f:
-            st.download_button("Download Questions PDF", f, "questions.pdf")
+                if checked and q not in selected:
+                    if len(selected) < limits[mark_type]:
+                        selected.append(q)
+                    else:
+                        st.warning(f"Max {limits[mark_type]} reached")
+
+                elif not checked and q in selected:
+                    selected.remove(q)
+
+    st.divider()
+
+    if st.button("📄 Export Selected Questions"):
+        text = ""
+        for mtype, qs in st.session_state.selected_questions.items():
+            text += f"## {mtype}\n"
+            for q in qs:
+                text += f"- {q}\n"
+
+        create_pdf(text, "selected_questions.pdf")
+
+        with open("selected_questions.pdf", "rb") as f:
+            st.download_button("Download", f, "selected_questions.pdf")
