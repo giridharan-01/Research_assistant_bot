@@ -1,5 +1,5 @@
 # =========================
-# PART 1: IMPORTS & SETUP
+# IMPORTS & SETUP
 # =========================
 
 import streamlit as st
@@ -7,14 +7,13 @@ import os
 import shutil
 import markdown
 import weasyprint
+import json
+import re
 
-# 🔥 FIX PROXY ISSUE
+# Fix proxy issues
 os.environ.pop("HTTP_PROXY", None)
 os.environ.pop("HTTPS_PROXY", None)
-os.environ.pop("http_proxy", None)
-os.environ.pop("https_proxy", None)
 os.environ["NO_PROXY"] = "*"
-os.environ["no_proxy"] = "*"
 
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
@@ -24,6 +23,7 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
@@ -37,6 +37,16 @@ st.set_page_config(page_title="Chat with PDF", layout="wide")
 
 st.title("Hi, I am Ray..")
 st.markdown("Your **PDF Assistant**")
+
+# UI Styling
+st.markdown("""
+<style>
+    .stChatMessage {
+        border-radius: 10px;
+        padding: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # =========================
 # SESSION STATE
@@ -113,7 +123,7 @@ def create_rag_chain(llm, retriever):
     )
 
     qa_prompt = ChatPromptTemplate.from_messages([
-        ("system", "Use context to answer. If unknown, say I don't know.\n\n{context}"),
+        ("system", "Answer using context and mention source page numbers. If unknown, say I don't know.\n\n{context}"),
         MessagesPlaceholder("chat_history"),
         ("human", "{input}")
     ])
@@ -155,16 +165,21 @@ def create_pdf(text, filename):
 # UI
 # =========================
 
-t1, t2 = st.tabs(["📄 PDF Assistant", "💡 Project Ideas"])
+t1, t2 = st.tabs(["📄 PDF Assistant", "💡 Question Generator"])
 
 # =========================
-# TAB 1: PDF CHAT
+# TAB 1
 # =========================
 
 with t1:
-    uploaded_files = st.file_uploader(
-        "Upload PDFs", type="pdf", accept_multiple_files=True
-    )
+    uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
+
+    if st.button("🔄 Upload New PDF"):
+        st.session_state.pop("rag_obj", None)
+        st.session_state.pop("metadata", None)
+        st.session_state.messages = []
+        store.clear()
+        st.rerun()
 
     if uploaded_files and "rag_obj" not in st.session_state:
         doc_pages = []
@@ -172,10 +187,14 @@ with t1:
 
         for file in uploaded_files:
             save_uploaded_file(file)
-
             path = os.path.join("tempDir", file.name)
+
             loader = PyPDFLoader(path)
-            pages = loader.load_and_split()
+            pages = loader.load()
+
+            splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+            pages = splitter.split_documents(pages)
+
             doc_pages.extend(pages)
 
             title, author = extract_metadata(path)
@@ -191,70 +210,53 @@ with t1:
 
     if "rag_obj" in st.session_state:
 
-        # 🔥 METADATA
         for m in st.session_state.metadata:
             st.write(f"**Title:** {m['title']}")
             st.write(f"**Author:** {m['author']}")
             st.divider()
 
-        # 🔥 CHAT DISPLAY CONTAINER
-        chat_container = st.container()
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-        with chat_container:
-            for msg in st.session_state.messages:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
-
-        # 🔥 INPUT ALWAYS AT BOTTOM
         query = st.chat_input("Ask your question")
 
         if query:
-            # Save user message
-            st.session_state.messages.append({
-                "role": "user",
-                "content": query
-            })
+            st.session_state.messages.append({"role": "user", "content": query})
 
-            # Get response
             response = get_response(st.session_state.rag_obj, query)
 
-            # Save assistant message
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": response
-            })
+            st.session_state.messages.append({"role": "assistant", "content": response})
 
             st.rerun()
 
-        # 🔥 CLEAR CHAT
         if st.button("Clear Chat"):
             st.session_state.messages = []
             store.clear()
             st.rerun()
 
-# =========================
-# TAB 2: PROJECT IDEAS
-# =========================
+        if st.button("📥 Download Chat as PDF"):
+            chat_text = ""
+            for msg in st.session_state.messages:
+                role = "User" if msg["role"] == "user" else "Assistant"
+                chat_text += f"**{role}:** {msg['content']}\n\n"
+
+            create_pdf(chat_text, "chat.pdf")
+
+            with open("chat.pdf", "rb") as f:
+                st.download_button("Download PDF", f, file_name="chat.pdf")
 
 # =========================
-# TAB 2: QUESTION GENERATOR
-# =========================
-
-# =========================
-# TAB 2: PDF → QUESTION GENERATOR
+# TAB 2
 # =========================
 
 with t2:
-    st.title("📘 Question Generator from PDF (Bloom’s Taxonomy)")
+    st.title("📘 Question Generator from PDF")
 
     uploaded_pdf = st.file_uploader("Upload Syllabus PDF", type="pdf")
 
     if "question_bank" not in st.session_state:
         st.session_state.question_bank = {}
-
-    # =========================
-    # EXTRACT TEXT FROM PDF
-    # =========================
 
     def extract_text_from_pdf(file):
         reader = PdfReader(file)
@@ -263,32 +265,20 @@ with t2:
             text += page.extract_text() + "\n"
         return text
 
-    # =========================
-    # GENERATE QUESTIONS
-    # =========================
-
     if uploaded_pdf and st.button("Generate Questions"):
-
         syllabus_text = extract_text_from_pdf(uploaded_pdf)
 
         prompt = f"""
-        You are an expert question paper setter.
+        You are a strict JSON generator.
 
-        From the syllabus below:
-        1. Identify units (Unit 1, Unit 2, etc.)
-        2. For EACH unit generate:
-            - 3 questions for 3 marks (Remember, Understand)
-            - 3 questions for 5 marks (Apply, Analyze)
-            - 3 questions for 10 marks (Evaluate, Create)
+        Output ONLY valid JSON.
 
-        Use Bloom’s Taxonomy verbs.
-
-        Return STRICT JSON:
+        Format:
         {{
             "Unit 1": {{
-                "3M": ["..."],
-                "5M": ["..."],
-                "10M": ["..."]
+                "3M": ["Q1", "Q2", "Q3"],
+                "5M": ["Q1", "Q2", "Q3"],
+                "10M": ["Q1", "Q2", "Q3"]
             }}
         }}
 
@@ -297,85 +287,54 @@ with t2:
         """
 
         response = st.session_state.llm.invoke(prompt)
-        print("response",response)
 
-        import json
-        try:
-            st.session_state.question_bank = json.loads(response.content)
-        except:
-            st.error("⚠️ Failed to parse response. Try again.")
+        raw = response.content
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
 
-    # =========================
-    # FILTER
-    # =========================
+        if match:
+            try:
+                st.session_state.question_bank = json.loads(match.group())
+            except:
+                st.error("Parsing failed")
+        else:
+            st.error("Invalid response")
 
-    filter_type = st.selectbox(
-        "Filter Questions",
-        ["All", "3M", "5M", "10M"]
-    )
-
-    # =========================
-    # DISPLAY + EDIT
-    # =========================
+    filter_type = st.selectbox("Filter", ["All", "3M", "5M", "10M"])
 
     for unit, data in st.session_state.question_bank.items():
-
-        with st.expander(f"📚 {unit}", expanded=True):
-
+        with st.expander(unit, expanded=True):
             for mark_type, questions in data.items():
-
                 if filter_type != "All" and filter_type != mark_type:
                     continue
 
-                st.subheader(f"{mark_type} Questions")
+                st.subheader(mark_type)
 
                 for i, q in enumerate(questions):
-
                     col1, col2 = st.columns([8, 1])
 
                     with col1:
-                        new_q = st.text_area(
-                            f"{unit}_{mark_type}_{i}",
-                            value=q,
-                            key=f"{unit}_{mark_type}_{i}"
-                        )
+                        new_q = st.text_area(f"{unit}_{mark_type}_{i}", value=q)
                         st.session_state.question_bank[unit][mark_type][i] = new_q
 
                     with col2:
                         if st.button("❌", key=f"del_{unit}_{mark_type}_{i}"):
-                            st.session_state.question_bank[unit][mark_type].pop(i)
+                            questions.pop(i)
                             st.rerun()
 
-                # ADD QUESTION
                 if st.button(f"➕ Add {mark_type}", key=f"add_{unit}_{mark_type}"):
-                    st.session_state.question_bank[unit][mark_type].append("New Question")
+                    questions.append("New Question")
                     st.rerun()
 
-    # =========================
-    # REORDER
-    # =========================
+    if st.button("📄 Export Questions PDF"):
+        text = ""
+        for unit, data in st.session_state.question_bank.items():
+            text += f"# {unit}\n"
+            for mtype, qs in data.items():
+                text += f"## {mtype}\n"
+                for q in qs:
+                    text += f"- {q}\n"
 
-    st.divider()
-    st.subheader("🔄 Reorder Questions")
+        create_pdf(text, "questions.pdf")
 
-    units = list(st.session_state.question_bank.keys())
-
-    if units:
-        selected_unit = st.selectbox("Select Unit", units)
-        mark_type = st.selectbox("Select Type", ["3M", "5M", "10M"])
-
-        questions = st.session_state.question_bank[selected_unit][mark_type]
-
-        if len(questions) > 1:
-            idx = st.number_input("Question Index", 0, len(questions)-1)
-
-            direction = st.radio("Move", ["Up", "Down"])
-
-            if st.button("Apply Reorder"):
-                if direction == "Up" and idx > 0:
-                    questions[idx], questions[idx-1] = questions[idx-1], questions[idx]
-                elif direction == "Down" and idx < len(questions)-1:
-                    questions[idx], questions[idx+1] = questions[idx+1], questions[idx]
-
-                st.session_state.question_bank[selected_unit][mark_type] = questions
-                st.rerun()
+        with open("questions.pdf", "rb") as f:
+            st.download_button("Download Questions PDF", f, "questions.pdf")
