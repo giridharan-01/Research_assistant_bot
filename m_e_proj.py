@@ -54,28 +54,29 @@ def create_pdf(text, filename):
 # =========================
 # TABS
 # =========================
-t1, t2 = st.tabs(["📄 PDF Assistant", "📘 Question Generator"])
+t1, t2 , t3= st.tabs(["📄 PDF Assistant", "⬇️ Download chat","📘 Question Generator"])
 
 # =========================
 # TAB 1: FIXED CHAT UI
 # =========================
 with t1:
 
-    st.markdown("""
-    <style>
-    .chat-box {
-        height: 70vh;
-        overflow-y: auto;
-        border: 1px solid #ddd;
-        padding: 10px;
-        border-radius: 10px;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+#    st.markdown("""
+#    <style>
+#    .chat-box {
+#        height: 70vh;
+#        overflow-y: auto;
+#        border: 1px solid #ddd;
+#        padding: 10px;
+#        border-radius: 10px;
+#    }
+#    </style>
+#    """, unsafe_allow_html=True)
 
     uploaded_files = st.file_uploader("Upload PDFs", type="pdf", accept_multiple_files=True)
-
-    if uploaded_files and "retriever" not in st.session_state:
+    
+    if st.button("🚀 Start") and "retriever" not in st.session_state:
+#    if uploaded_files and "retriever" not in st.session_state:
 
         docs = []
         for file in uploaded_files:
@@ -92,18 +93,24 @@ with t1:
 
     if "retriever" in st.session_state:
 
-        st.markdown('<div class="chat-box">', unsafe_allow_html=True)
+#        st.markdown('<div class="chat-box">', unsafe_allow_html=True)
 
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-        st.markdown('</div>', unsafe_allow_html=True)
+#        st.markdown('</div>', unsafe_allow_html=True)
 
         query = st.chat_input("Ask your question")
 
         if query:
+                
             st.session_state.messages.append({"role": "user", "content": query})
+    #        with st.chat_message("user"):
+    #            st.rerun()
+    #            st.markdown(query)
+                
+                
 
             docs = st.session_state.retriever.get_relevant_documents(query)
             context = "\n".join([d.page_content for d in docs])
@@ -111,32 +118,63 @@ with t1:
             response = st.session_state.llm.invoke(
                 f"Answer using context:\n{context}\n\nQuestion:{query}"
             )
+            
+            with st.chat_message("assistant"):
+                st.write(response.content)
 
             st.session_state.messages.append(
                 {"role": "assistant", "content": response.content}
             )
 
             st.rerun()
+#        with st.sidebar:
+   
+with t2:
+    if st.button("Clear Chat"):
+        st.session_state.messages = []
+        st.rerun()
 
-        if st.button("Clear Chat"):
-            st.session_state.messages = []
-            st.rerun()
+    if st.button("📥 Download Chat"):
+        text = ""
+        for i,msg in enumerate(st.session_state.messages):
+            role = "User" if msg["role"] == "user" else "Assistant"
+            if role == "User":
+                text+=f"**Q{int((i/2)+1)}. {msg['content']}** \n\n"
+            else:
+                text += f"**Answer:** {msg['content']}\n\n"
 
-        if st.button("📥 Download Chat"):
-            text = ""
-            for msg in st.session_state.messages:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                text += f"**{role}:** {msg['content']}\n\n"
+        create_pdf(text, "chat.pdf")
 
-            create_pdf(text, "chat.pdf")
+        with open("chat.pdf", "rb") as f:
+            st.download_button("Download", f, "chat.pdf")
 
-            with open("chat.pdf", "rb") as f:
-                st.download_button("Download", f, "chat.pdf")
+
+#    text = ""
+#    for i, msg in enumerate(st.session_state.messages):
+#        role = "User" if msg["role"] == "user" else "Assistant"
+#        
+#        if role == "User":
+#            text += f"**Question {int((i/2)+1)}: {msg['content']}**\n\n"
+#        else:
+#            text += f"**Answer:** {msg['content']}\n\n"
+#
+#    pdf_bytes = create_pdf(text,"Chat.pdf")
+#    
+#    with open("chat.pdf", "rb") as f:
+#        st.download_button("📥Download", f, "chat.pdf")
+#
+#    st.download_button(
+#        label="📥 Download Chat",
+#        data=pdf_bytes,
+#        file_name="chat.pdf",
+#        mime="application/pdf"
+#    )
+
 
 # =========================
 # TAB 2: QUESTION SYSTEM
 # =========================
-with t2:
+with t3:
 
     uploaded_pdf = st.file_uploader("Upload Syllabus PDF", type="pdf")
 
